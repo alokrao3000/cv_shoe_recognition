@@ -1,0 +1,13 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Built reference index + downloaded reference images + StockX token cache —
+# regenerate with scripts/build_reference_index.py / scripts/stockx_auth.py
+data/reference_index/*
+!data/reference_index/.gitkeep
+data/query_cache/*
+!data/query_cache/.gitkeep
+data/stockx_token.json
