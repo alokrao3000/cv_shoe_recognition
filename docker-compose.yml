@@ -1,0 +1,15 @@
+services:
+  cv_sneaker_recognition:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cv_sneaker_recognition:latest
+    container_name: cv_sneaker_recognition
+    ports:
+      - "8100:8100"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    restart: unless-stopped

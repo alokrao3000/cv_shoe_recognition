@@ -20,6 +20,7 @@ the refresh token to data/stockx_token.json (app/stockx_client.py reads it
 from there and keeps it updated across rotations).
 """
 import secrets
+import ssl
 import sys
 import threading
 import webbrowser
@@ -74,7 +75,19 @@ def main():
     })
 
     redirect = urlparse(settings.stockx_redirect_uri)
-    server = HTTPServer((redirect.hostname or "localhost", redirect.port or 80), _CallbackHandler)
+    default_port = 443 if redirect.scheme == "https" else 80
+    server = HTTPServer((redirect.hostname or "localhost", redirect.port or default_port), _CallbackHandler)
+    if redirect.scheme == "https":
+        # StockX requires an https redirect URI — serve the callback over TLS
+        # with a locally-trusted mkcert certificate (mkcert localhost 127.0.0.1).
+        certfile, keyfile = r"C:\certs\localhost+1.pem", r"C:\certs\localhost+1-key.pem"
+        if not (Path(certfile).exists() and Path(keyfile).exists()):
+            sys.exit(f"HTTPS redirect URI configured but cert files missing "
+                     f"({certfile}, {keyfile}) — generate them with: "
+                     f"mkcert -cert-file {certfile} -key-file {keyfile} localhost 127.0.0.1")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=certfile, keyfile=keyfile)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
 
     print(f"Listening on {settings.stockx_redirect_uri}")
     print("Opening StockX login page (copy the URL below into a browser if it doesn't open):\n")
