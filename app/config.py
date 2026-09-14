@@ -29,6 +29,13 @@ class Settings(BaseSettings):
 
     # ── Identification ──
     embedding_model: str = "facebook/dinov2-base"
+    # "cls" | "mean_patch" | "cls_mean_concat" — empirically compared with
+    # scripts/eval_pooling.py on a real cross-retailer-photo leave-out task.
+    # CLS won clearly (57.5% top-1 vs 22.5% for mean_patch, 51.2% for the
+    # concat) — patch-token pooling turned out to carry more background/
+    # crop/angle noise than useful fine-grained signal on real retailer
+    # photos. Don't switch this without re-running that eval on real data.
+    embedding_pooling: str = "cls"
     reference_index_dir: str = str(BASE_DIR / "data" / "reference_index")
     query_cache_dir: str = str(BASE_DIR / "data" / "query_cache")
 
@@ -39,6 +46,20 @@ class Settings(BaseSettings):
     min_match_similarity: float = 0.80
     min_match_margin: float = 0.03
     top_k: int = 5
+
+    # ── Coverage backfill (scripts/backfill_stockx_images.py) ──
+    # The reference catalog built from sneaker-arbitrage's DB only covers
+    # SKUs some retailer happened to scrape (see README §Known limitations).
+    # This fills gaps by fetching real StockX product photos through a
+    # stealth browser (app/browser_session.py) — see that file's docstring
+    # for why a plain HTTP fetch doesn't work and what it actually costs.
+    browser_headless: bool = True
+    browser_state_dir: str = str(BASE_DIR / "data" / "browser_state")
+    browser_nav_timeout_ms: int = 30000
+    # Delay between product-page navigations — pacing, not speed; StockX's
+    # bot-management weighs request cadence as well as browser fingerprint.
+    stockx_image_scrape_delay_min: float = 2.0
+    stockx_image_scrape_delay_max: float = 5.0
 
 
 settings = Settings()

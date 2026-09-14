@@ -16,5 +16,13 @@ numpy==1.26.4
 # (read-only; this project keeps no database of its own)
 psycopg2-binary==2.9.10
 
+# Stealth browser for scripts/backfill_stockx_images.py — see
+# app/browser_session.py's docstring for why (StockX's API has no image
+# field; its website is behind Cloudflare bot management). patchright, not
+# stock Playwright — pinned to match sneaker-arbitrage's proven version.
+# After installing, run: python -m patchright install chromium
+patchright==1.61.2
+setuptools<70   # patchright pulls pyee>=13; see sneaker-arbitrage/requirements.txt
+
 # Tests
 pytest==8.3.3

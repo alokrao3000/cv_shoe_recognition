@@ -50,6 +50,31 @@ class ReferenceIndex:
             raise ValueError(f"{len(items)} items vs {embeddings.shape[0]} embeddings")
         return cls(embeddings.astype("float32", copy=False), items)
 
+    @property
+    def items(self) -> List[ReferenceItem]:
+        return self._items
+
+    @property
+    def vectors(self) -> np.ndarray:
+        return self._vectors
+
+    @property
+    def skus(self) -> set:
+        return {item.sku for item in self._items}
+
+    def merged_with(self, new_items: List[ReferenceItem], new_vectors: np.ndarray) -> "ReferenceIndex":
+        """Returns a new index with new_items/new_vectors appended — used by
+        scripts/backfill_stockx_images.py to add SKUs the DB-sourced build
+        never had a photo for, without re-embedding everything that's
+        already indexed."""
+        if len(new_items) != new_vectors.shape[0]:
+            raise ValueError(f"{len(new_items)} items vs {new_vectors.shape[0]} embeddings")
+        if not new_items:
+            return self
+        combined_items = self._items + new_items
+        combined_vectors = np.concatenate([self._vectors, new_vectors.astype("float32", copy=False)], axis=0)
+        return ReferenceIndex(combined_vectors, combined_items)
+
     def save(self, directory: Optional[str] = None):
         d = Path(directory or settings.reference_index_dir)
         d.mkdir(parents=True, exist_ok=True)

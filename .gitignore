@@ -11,3 +11,7 @@ data/reference_index/*
 data/query_cache/*
 !data/query_cache/.gitkeep
 data/stockx_token.json
+
+# Browser session cookies (scripts/backfill_stockx_images.py) — same
+# sensitivity as any other saved login session, never committed.
+data/browser_state/

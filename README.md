@@ -79,6 +79,13 @@ python scripts/identify_cli.py path\to\photo.jpg
   `EMBEDDING_MODEL`) — chosen over CLIP because this is fine-grained
   *instance* retrieval (telling colorways of the same silhouette apart), not
   loose semantic matching. See `app/embeddings.py`.
+- **Pooling**: CLS token (`EMBEDDING_POOLING=cls`, the default). Mean-pooling
+  the patch tokens instead looked like the textbook fix for a weak-
+  discrimination symptom seen on real data, but `scripts/eval_pooling.py`
+  (a real leave-out test: hold out a *different retailer's* photo of a known
+  SKU, check whether it still ranks #1 against ~500 other candidates) showed
+  it's actually much worse — 57.5% top-1 for CLS vs. 22.5% for mean-pooled
+  patches. Don't change this default without re-running that eval.
 - **Index**: L2-normalized embeddings in a NumPy array, searched by a plain
   matrix-multiply (dot product = cosine similarity). Not FAISS — that was
   tried first and dropped after it turned out to crash on import alongside
@@ -110,15 +117,66 @@ and low (a couple of API calls per identify request, not a bulk scrape):
 `/identify` returns the overall lowest ask / highest bid (min/max across all
 available sizes) plus a per-size breakdown.
 
+## Reference coverage gap, and the (currently blocked) backfill
+
+The DB-sourced reference index only ever contains SKUs some retailer among
+sneaker-arbitrage's ~80 happened to scrape — real-world case that surfaced
+this: a photo of a genuine, StockX-sellable Air Force 1 colorway
+(`IV6027-001`) came back `identified: false`, not because matching failed,
+but because that SKU had **zero rows** in `supplier_products` — no retailer
+in the DB had ever carried it. No embedding model fixes a SKU the index
+never saw a photo of.
+
+`scripts/backfill_stockx_images.py` exists to close that gap: it enumerates
+a broader slice of StockX's catalog via `catalog/search` (curated seed
+queries — brand/silhouette terms, see `SEED_QUERIES` in the script), then
+fetches a real product photo for each SKU missing from the index and merges
+it in. Getting that photo isn't simple, though — **StockX's official API
+has no image field at all** (confirmed live), and **its website is behind
+Cloudflare bot management**: a plain HTTP GET gets a 403 challenge page, so
+this goes through a stealth browser (`app/browser_session.py`, ported from
+sneaker-arbitrage's `app/scrapers/browser.py`, same patchright approach
+already proven out there for StockX/GOAT market-data scraping).
+
+**Current status: blocked in this dev environment.** Live-tested both a
+cold session and one loaded with sneaker-arbitrage's own accumulated
+`stockx.json` session cookies — both get Cloudflare's "Just a moment..."
+interstitial and it never clears. Ruling out stale cookies as the cause
+points at IP/network-reputation blocking, which `browser.py`'s own
+docstring already flagged as a real risk with no proxy configured
+(`STOCKX_PROXY_URL`/`GOAT_PROXY_URL` are empty in sneaker-arbitrage's
+`.env` too). **This may or may not reproduce from a different network** —
+try it yourself:
+```
+venv\Scripts\pip install -r requirements.txt   # picks up patchright
+venv\Scripts\python -m patchright install chromium
+python scripts/backfill_stockx_images.py --headed --max-new 5
+```
+`--headed` opens a real browser window so you can see directly whether it's
+a Cloudflare challenge page or the real site. If it works for you, drop
+`--headed` and raise `--max-new` for a real run. If it's still blocked, a
+residential proxy is the standard fix for this class of problem (thread it
+through `proxy_url` in `app/browser_session.py`, same shape as
+sneaker-arbitrage's `STOCKX_PROXY_URL`) — not yet wired up here since
+there's nothing to point it at.
+
 ## Known limitations / next steps
 
+- Reference coverage is bounded by what's been scraped/backfilled — see
+  above. `scripts/build_reference_index.py` also silently drops SKUs whose
+  image failed to download/embed (~11% of the DB's distinct SKUs, last
+  checked) — worth investigating on its own before reaching for the
+  StockX backfill.
 - One reference image per SKU (whichever retailer photo was most recently
-  scraped). Multiple angles per SKU would likely improve match robustness —
-  `supplier_products` only stores one `image_url` today, so this would need
-  a schema change on the sneaker-arbitrage side first.
-- No fine-tuning — DINOv2 is used zero-shot. If match quality on real data
-  isn't good enough, the next step is fine-tuning on scraped (sku, image)
-  pairs rather than swapping the base model.
+  scraped, or fetched by the backfill). Multiple angles per SKU would likely
+  improve match robustness — `supplier_products` only stores one `image_url`
+  today, so this would need a schema change on the sneaker-arbitrage side.
+- No fine-tuning — DINOv2 is used zero-shot. Real leave-out testing
+  (`scripts/eval_pooling.py`) puts top-1 cross-retailer-photo accuracy at
+  ~57.5% for the current best pooling — a real ceiling, not just an
+  untuned threshold. If that's not good enough, fine-tuning on scraped
+  (sku, image) pairs is the next lever, not swapping the base model again
+  without re-running the eval.
 - Not yet wired into sneaker-arbitrage's `sku_parse_failed` fallback path —
   by design, per the standalone-first decision. Integration would mean that
   scraper calling this project's `/identify` (or importing its functions
