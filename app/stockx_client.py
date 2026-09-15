@@ -261,8 +261,12 @@ class StockXAPIClient:
         keys = list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__
         logger.warning(f"[stockx shape] {tag}: unexpected response shape (top-level: {keys})")
 
-    def _search(self, query: str, page_size: int = 10) -> List[dict]:
-        data = self._request("/catalog/search", {"query": query, "pageNumber": 1, "pageSize": page_size})
+    def _search(self, query: str, page_size: int = 10, page_number: int = 1) -> List[dict]:
+        # StockX caps pageSize at 50 (verified live: pageSize>50 -> 400
+        # "pageSize must be between 1 and 50") — page_number is how
+        # scripts/backfill_stockx_images.py gets past that per term.
+        data = self._request("/catalog/search",
+                             {"query": query, "pageNumber": page_number, "pageSize": page_size})
         if isinstance(data, dict) and isinstance(data.get("products"), list):
             return data["products"]
         if data is not None:

@@ -72,5 +72,14 @@ class Settings(BaseSettings):
     reverse_image_search_max_results: int = 5
     reverse_image_search_proxy_url: str = ""
 
+    # ── Text-image-search backfill (app/text_image_search.py,
+    # scripts/backfill_via_image_search.py) ──
+    # Unlike the StockX-image backfill above, this never touches stockx.com
+    # for the photo itself — it text-searches "{name} {sku}" and downloads
+    # whatever real product photo comes back (eBay, retailer sites, blogs).
+    # Verified NOT walled the way stockx.com or reverse-image upload are.
+    image_search_delay_min: float = 1.5
+    image_search_delay_max: float = 3.5
+
 
 settings = Settings()
