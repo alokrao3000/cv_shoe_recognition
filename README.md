@@ -160,6 +160,41 @@ through `proxy_url` in `app/browser_session.py`, same shape as
 sneaker-arbitrage's `STOCKX_PROXY_URL`) — not yet wired up here since
 there's nothing to point it at.
 
+### Per-request fallback: reverse image search (`app/reverse_image_search.py`)
+
+The backfill above only helps once, ahead of time, and only for SKUs it
+happened to think to look for. A live `/identify` call for a shoe the index
+never saw — a real case that surfaced this: a StrangeLove Dunks photo came
+back `identified: false` even though it's about as recognizable as shoes
+get — has nowhere else to go once the local match fails, *unless* something
+finds the SKU some other way at request time.
+
+`app/reverse_image_search.py` does that by going around StockX's wall
+instead of through it: reverse-image-search the uploaded photo via Google
+Images to find *other* pages carrying the same shoe (a retailer, a resale
+listing, a sneaker-info site — anything not itself bot-walled), then scrape
+a SKU/style-code off one of those pages. Any SKU recovered this way still
+has to clear the normal StockX `catalog/search` match before it's trusted
+for a market lookup — finding a SKU-shaped string on a random page isn't
+proof by itself.
+
+**Current status: also blocked from this dev environment**, same class of
+problem as the StockX backfill above — verified live, the very first
+reverse-image upload gets Google's own "unusual traffic" bot check before
+any results render. Consequently:
+- It's **off by default** (`REVERSE_IMAGE_SEARCH_ENABLED=false`) — wiring in
+  a fallback that reliably hits a CAPTCHA wall would just add latency to
+  every unmatched `/identify` call for no benefit.
+- The result-page scraping (best-guess text, result links, the SKU regexes)
+  is consequently **unverified** against a real results page — written from
+  Google Images' known layout, not confirmed live.
+- Try it yourself with `scripts/test_reverse_image_search.py path\to\photo.jpg
+  --headed` — if your network gets past the challenge, check the scraped
+  best-guess/links look right and fix up the selectors as needed, then flip
+  `REVERSE_IMAGE_SEARCH_ENABLED=true`. If it's also blocked,
+  `REVERSE_IMAGE_SEARCH_PROXY_URL` takes the same proxy this project's
+  other browser use does.
+
 ## Known limitations / next steps
 
 - Reference coverage is bounded by what's been scraped/backfilled — see

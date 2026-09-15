@@ -32,6 +32,7 @@ import logging
 from typing import Dict, List, Union
 
 import numpy as np
+import pillow_heif
 import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel
@@ -39,6 +40,12 @@ from transformers import AutoImageProcessor, AutoModel
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Registers HEIC/HEIF with PIL's Image.open() — plain Pillow can't decode it,
+# and HEIC is the default photo format iPhones save in, so without this
+# every phone-camera shoe photo fails to load (see app/main.py's /identify
+# 400 "Couldn't read that as an image.").
+pillow_heif.register_heif_opener()
 
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 _model = None

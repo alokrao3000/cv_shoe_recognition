@@ -1,12 +1,13 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
-from app import embeddings, stockx_client
+from app import embeddings, reverse_image_search, stockx_client
 from app.config import settings
 from app.index import ReferenceIndex, classify_match
-from app.models import IdentifyResponse
+from app.models import IdentifyResponse, ReverseSearchMatch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ async def identify(file: UploadFile = File(...)):
     try:
         image = embeddings.load_image(data)
     except Exception:
+        logger.warning(f"Failed to decode uploaded image {file.filename!r} ({file.content_type})", exc_info=True)
         raise HTTPException(400, "Couldn't read that as an image.")
 
     vec = embeddings.embed_image(image)
@@ -69,6 +71,24 @@ async def identify(file: UploadFile = File(...)):
                 resp.market = market
             else:
                 resp.market_error = err
+    elif settings.reverse_image_search_enabled:
+        # Local index came up empty/ambiguous — see if this is a shoe the
+        # index simply never saw (README §Reference coverage gap) rather
+        # than a bad match, by finding a SKU some other page carries for
+        # the same photo. Runs a real browser, so keep it off the event
+        # loop (see app/reverse_image_search.py's find_sku docstring).
+        sku, source = await asyncio.to_thread(reverse_image_search.find_sku, data, file.filename or "upload.jpg")
+        if sku is None:
+            resp.reverse_search_status = source
+        elif not stockx_client.is_configured():
+            resp.reverse_search_status = f"sku_found_no_market:{sku}:stockx_not_configured"
+        else:
+            market, err = _stockx.get_market(sku, "")
+            if market is not None:
+                resp.reverse_search_match = ReverseSearchMatch(sku=sku, source=source)
+                resp.market = market
+            else:
+                resp.reverse_search_status = f"sku_found_no_market:{sku}:{err}"
 
     return resp
 

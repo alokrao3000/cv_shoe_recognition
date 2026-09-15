@@ -9,7 +9,8 @@ httpx==0.28.1
 # CV / embeddings
 torch==2.5.1                # CPU by default; auto-uses CUDA if a GPU build is installed
 transformers==4.46.3        # DINOv2 model + image processor
-pillow==11.0.0
+pillow==12.3.0
+pillow-heif==1.7.0          # HEIC/HEIF support — default photo format on iPhone
 numpy==1.26.4
 
 # Reading the sneaker-arbitrage Postgres DB to source reference images

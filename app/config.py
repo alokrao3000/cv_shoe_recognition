@@ -61,5 +61,16 @@ class Settings(BaseSettings):
     stockx_image_scrape_delay_min: float = 2.0
     stockx_image_scrape_delay_max: float = 5.0
 
+    # ── Reverse-image-search SKU fallback (app/reverse_image_search.py) ──
+    # When the local reference index has no confident match, optionally try
+    # recovering a SKU via Google Images reverse search instead of just
+    # returning identified=False. Off by default: verified BLOCKED by
+    # Google's own bot check from this dev environment (see that module's
+    # docstring) — enable only once you've confirmed it actually gets past
+    # that on your network (scripts/test_reverse_image_search.py --headed).
+    reverse_image_search_enabled: bool = False
+    reverse_image_search_max_results: int = 5
+    reverse_image_search_proxy_url: str = ""
+
 
 settings = Settings()
