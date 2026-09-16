@@ -97,6 +97,17 @@ class Observation:
                 return c
         return "unknown"
 
+    def _from_vision_only(self, attr: str) -> bool:
+        """True when the query attribute comes from the vision model alone (no page/title evidence)."""
+        if not self.vision:
+            return False
+        page_val = getattr(self.parsed_title, attr, "") if self.parsed_title else ""
+        return not page_val or page_val == "unknown"
+
+    def vision_is_certain(self, attr: str) -> bool:
+        conf = {"model": self.vision.model_confidence, "brand": self.vision.brand_confidence}.get(attr, 0.0) if self.vision else 0.0
+        return conf >= 0.9
+
     @property
     def price(self) -> Optional[float]:
         return self.page.price if self.page else None
@@ -261,9 +272,15 @@ def detect_contradictions(c: ScoredCandidate, obs: Observation) -> ScoredCandida
     if ptype and not any(t in ptype for t in ("sneaker", "shoe", "footwear", "boot", "slide", "sandal", "clog")):
         hard.append(f"stockx_product_type:{ptype}")
 
+    # Vision-only attributes can be wrong; they penalize but only veto when the
+    # page/title says the same thing (or vision is near-certain).
     cat = category_compatible(obs.size_category, c.size_category)
     if cat is False:
-        hard.append(f"size_category_mismatch:{obs.size_category}!={c.size_category}")
+        msg = f"size_category_mismatch:{obs.size_category}!={c.size_category}"
+        if obs._from_vision_only("size_category"):
+            soft.append((msg + " (vision only)", 0.25))
+        else:
+            hard.append(msg)
     g = gender_compatible(obs.gender, c.gender)
     if g is False:
         soft.append((f"gender_mismatch:{obs.gender}!={c.gender}", 0.15))
@@ -274,7 +291,10 @@ def detect_contradictions(c: ScoredCandidate, obs: Observation) -> ScoredCandida
         if cq and cc and cq != cc:
             sim = model_similarity(qm, cm) or 0.0
             if sim < 0.5:
-                hard.append(f"model_mismatch:{cq}!={cc}")
+                if obs._from_vision_only("model") and not obs.vision_is_certain("model"):
+                    soft.append((f"model_mismatch:{cq}!={cc} (vision only)", 0.3))
+                else:
+                    hard.append(f"model_mismatch:{cq}!={cc}")
             elif sim < 0.9:
                 soft.append((f"model_height_unspecified:{cq}~{cc}", 0.05))
 
@@ -292,7 +312,10 @@ def detect_contradictions(c: ScoredCandidate, obs: Observation) -> ScoredCandida
 
     fq, fc = canonical_brand_family(obs.brand), canonical_brand_family(c.brand)
     if fq and fc and fq != fc:
-        hard.append(f"brand_mismatch:{obs.brand}!={c.brand}")
+        if obs._from_vision_only("brand") and not obs.vision_is_certain("brand"):
+            soft.append((f"brand_mismatch:{obs.brand}!={c.brand} (vision only)", 0.3))
+        else:
+            hard.append(f"brand_mismatch:{obs.brand}!={c.brand}")
 
     if obs.parsed_title and obs.parsed_title.collab and c.name:
         if obs.parsed_title.collab.lower() not in c.name.lower():

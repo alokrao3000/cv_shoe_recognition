@@ -30,6 +30,16 @@ class _NoVision(VisionClient):
         return False
 
 
+def _cand_summary(c):
+    if c is None:
+        return None
+    return {"style_code": c.style_code_display, "name": c.name, "score": c.score, "rejected": c.rejected,
+            "rejection_reason": c.rejection_reason, "components": c.components, "component_notes": c.component_notes,
+            "contradictions": c.contradictions, "sources": sorted({s.kind for s in c.sources}),
+            "embedding_similarity": c.embedding_similarity,
+            "verification": c.verification.model_dump() if c.verification else None}
+
+
 def load_cases(path: Path, limit, tag):
     cases = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -93,10 +103,18 @@ def main():
                 mapped += 1
         if r.status == "unresolved":
             unresolved += 1
+        winner = next((x for x in r.candidates if not x.rejected), None)
+        expected_cand = next((x for x in r.candidates if x.style_code == expected), None)
+        vis = r.evidence.get("vision") or {}
         row = {"expected": c["expected_style_code"], "got": r.product.style_code if r.product else None, "status": r.status,
                "confidence": r.confidence, "top1": hit1, "top3": hit3, "ms": ms, "failure_codes": r.failure_codes,
                "tags": c.get("tags", []), "title": c.get("title"), "stockx": r.stockx.product_id if r.stockx else None,
-               "ranking": ranked[:5]}
+               "ranking": ranked[:5], "notes": (r.evidence.get("resolution") or {}).get("notes", []),
+               "errors": r.evidence.get("errors", {}),
+               "vision": {k: vis.get(k) for k in ("brand", "model", "colorway", "official_colorway_guess", "gender",
+                                                  "size_category", "visible_style_code")} if vis else None,
+               "winner": _cand_summary(winner), "expected_candidate": _cand_summary(expected_cand),
+               "timings_ms": r.evidence.get("timings_ms", {})}
         results.append(row)
         flag = "OK " if hit1 else ("~  " if hit3 else "XX ")
         print(f"[{i}/{len(cases)}] {flag} {r.status:<10} {c['expected_style_code']:<14} got {row['got'] or '-':<14} "
