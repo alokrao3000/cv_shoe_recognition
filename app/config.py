@@ -8,78 +8,77 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Read-only source for reference images (the sneaker-arbitrage DB) —
-    # only used by scripts/build_reference_index.py.
-    arbitrage_database_url: str = "postgresql://arbitrage:arbitrage_dev@localhost:5432/sneaker_arbitrage"
+    # ── This project's own database (Postgres + pgvector, docker-compose.yml) ──
+    database_url: str = "postgresql+psycopg2://cvshoe:cvshoe_dev@localhost:5434/cv_shoe_recognition"
+
+    # Read-only source for seeding reference products/images (sneaker-arbitrage
+    # DB) — only scripts/seed_from_arbitrage_db.py and build_eval_set.py use it.
+    arbitrage_database_url: str = "postgresql://postgres@localhost:5433/sneaker_arbitrage"
 
     host: str = "0.0.0.0"
     port: int = 8100
 
+    # ── API security ──
+    # Optional bearer token required on /api/* when set. Leave empty for local use.
+    api_token: str = ""
+    rate_limit_per_minute: int = 60
+    max_upload_bytes: int = 15 * 1024 * 1024
+    max_images_per_request: int = 6
+    fetch_timeout_seconds: float = 20.0
+    data_dir: str = str(BASE_DIR / "data")
+
     # ── StockX official API (developer.stockx.com) ──
-    # Same shape as sneaker-arbitrage's app/config.py, but this project keeps
-    # its own refresh token (see .env.example) rather than sharing one, and
-    # persists rotations to a local JSON file instead of a DB table — see
-    # app/stockx_client.py.
     stockx_client_id: str = ""
     stockx_client_secret: str = ""
     stockx_api_key: str = ""
     stockx_refresh_token: str = ""
     stockx_redirect_uri: str = "http://localhost:8018/stockx/callback"
     stockx_token_cache_path: str = str(BASE_DIR / "data" / "stockx_token.json")
+    stockx_cache_ttl_hours: int = 24
 
-    # ── Identification ──
+    # ── Vision LLM (Anthropic) ──
+    # ANTHROPIC_API_KEY is read by the SDK itself from the environment; this
+    # setting exists so a .env file works too.
+    anthropic_api_key: str = ""
+    vision_enabled: bool = True
+    vision_model: str = "claude-opus-5"
+    vision_max_image_px: int = 1568
+
+    # ── Web search provider ──
+    search_provider: str = "serper"        # serper | none
+    serper_api_key: str = ""
+    web_search_max_results: int = 10
+
+    # ── Embeddings ──
     embedding_model: str = "facebook/dinov2-base"
-    # "cls" | "mean_patch" | "cls_mean_concat" — empirically compared with
-    # scripts/eval_pooling.py on a real cross-retailer-photo leave-out task.
-    # CLS won clearly (57.5% top-1 vs 22.5% for mean_patch, 51.2% for the
-    # concat) — patch-token pooling turned out to carry more background/
-    # crop/angle noise than useful fine-grained signal on real retailer
-    # photos. Don't switch this without re-running that eval on real data.
-    embedding_pooling: str = "cls"
-    reference_index_dir: str = str(BASE_DIR / "data" / "reference_index")
-    query_cache_dir: str = str(BASE_DIR / "data" / "query_cache")
+    embedding_pooling: str = "cls"          # see app/vision/embeddings.py — don't change without re-running the eval
+    embedding_dim: int = 768
+    embedding_top_k: int = 10
+    # Cosine similarity below this is treated as "no visual evidence" rather than
+    # weak evidence — DINOv2 similarities between unrelated shoes cluster ~0.5-0.7.
+    embedding_floor: float = 0.70
+    # ...and at/above this it counts as full visual agreement (the real
+    # cross-retailer eval put correct matches around 0.85-0.95).
+    embedding_ceiling: float = 0.92
 
-    # A predicted SKU is only trusted when the top candidate clears this
-    # cosine-similarity floor AND beats the runner-up by min_match_margin —
-    # see app/index.py::search(). A wrong SKU silently feeding a price lookup
-    # is worse than returning "unidentified".
-    min_match_similarity: float = 0.80
-    min_match_margin: float = 0.03
-    top_k: int = 5
+    # ── Identity-match scoring weights (sum to 1.0; see app/pipeline/scoring.py) ──
+    weight_sku_match: float = 0.40
+    weight_model_match: float = 0.20
+    weight_colorway_match: float = 0.15
+    weight_embedding_similarity: float = 0.15
+    weight_metadata_match: float = 0.05
+    weight_external_agreement: float = 0.05
 
-    # ── Coverage backfill (scripts/backfill_stockx_images.py) ──
-    # The reference catalog built from sneaker-arbitrage's DB only covers
-    # SKUs some retailer happened to scrape (see README §Known limitations).
-    # This fills gaps by fetching real StockX product photos through a
-    # stealth browser (app/browser_session.py) — see that file's docstring
-    # for why a plain HTTP fetch doesn't work and what it actually costs.
-    browser_headless: bool = True
-    browser_state_dir: str = str(BASE_DIR / "data" / "browser_state")
-    browser_nav_timeout_ms: int = 30000
-    # Delay between product-page navigations — pacing, not speed; StockX's
-    # bot-management weighs request cadence as well as browser fingerprint.
-    stockx_image_scrape_delay_min: float = 2.0
-    stockx_image_scrape_delay_max: float = 5.0
+    # ── Confidence tiers ──
+    confidence_high: float = 0.95
+    confidence_medium: float = 0.85
+    confidence_low: float = 0.70
+    # Top-1 must beat top-2 by this much, else MULTIPLE_CANDIDATES.
+    ambiguity_margin: float = 0.05
+    verification_top_n: int = 3
 
-    # ── Reverse-image-search SKU fallback (app/reverse_image_search.py) ──
-    # When the local reference index has no confident match, optionally try
-    # recovering a SKU via Google Images reverse search instead of just
-    # returning identified=False. Off by default: verified BLOCKED by
-    # Google's own bot check from this dev environment (see that module's
-    # docstring) — enable only once you've confirmed it actually gets past
-    # that on your network (scripts/test_reverse_image_search.py --headed).
-    reverse_image_search_enabled: bool = False
-    reverse_image_search_max_results: int = 5
-    reverse_image_search_proxy_url: str = ""
-
-    # ── Text-image-search backfill (app/text_image_search.py,
-    # scripts/backfill_via_image_search.py) ──
-    # Unlike the StockX-image backfill above, this never touches stockx.com
-    # for the photo itself — it text-searches "{name} {sku}" and downloads
-    # whatever real product photo comes back (eBay, retailer sites, blogs).
-    # Verified NOT walled the way stockx.com or reverse-image upload are.
-    image_search_delay_min: float = 1.5
-    image_search_delay_max: float = 3.5
+    # ── Resolution cache ──
+    resolution_cache_ttl_hours: int = 24 * 7
 
 
 settings = Settings()

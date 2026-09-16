@@ -1,10 +1,15 @@
-# Web service (mirrors sneaker-arbitrage's stack for consistency)
+# Web service
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-python-multipart==0.0.17    # required by FastAPI for file-upload endpoints
+python-multipart==0.0.17
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
 httpx==0.28.1
+
+# Database (own Postgres + pgvector)
+sqlalchemy==2.0.54
+pgvector==0.5.0
+psycopg2-binary==2.9.10
 
 # CV / embeddings
 torch==2.5.1                # CPU by default; auto-uses CUDA if a GPU build is installed
@@ -13,17 +18,15 @@ pillow==12.3.0
 pillow-heif==1.7.0          # HEIC/HEIF support — default photo format on iPhone
 numpy==1.26.4
 
-# Reading the sneaker-arbitrage Postgres DB to source reference images
-# (read-only; this project keeps no database of its own)
-psycopg2-binary==2.9.10
+# Vision LLM (brand/model/colorway analysis + candidate verification)
+anthropic==1.6.0
 
-# Stealth browser for scripts/backfill_stockx_images.py — see
-# app/browser_session.py's docstring for why (StockX's API has no image
-# field; its website is behind Cloudflare bot management). patchright, not
-# stock Playwright — pinned to match sneaker-arbitrage's proven version.
-# After installing, run: python -m patchright install chromium
-patchright==1.61.2
-setuptools<70   # patchright pulls pyee>=13; see sneaker-arbitrage/requirements.txt
+# Product-page extraction
+selectolax==0.4.11          # fast HTML parsing (JSON-LD, meta, breadcrumbs, images)
+extruct==0.18.0             # structured-data extraction (JSON-LD / microdata / RDFa)
+
+# Fuzzy text matching for model/colorway comparison
+rapidfuzz==3.14.6
 
 # Tests
 pytest==8.3.3

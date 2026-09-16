@@ -1,15 +1,41 @@
 services:
-  cv_sneaker_recognition:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cv_shoe_postgres
+    environment:
+      POSTGRES_DB: cv_shoe_recognition
+      POSTGRES_USER: cvshoe
+      POSTGRES_PASSWORD: cvshoe_dev
+    volumes:
+      - cv_shoe_pgdata:/var/lib/postgresql/data
+    ports:
+      # 5434 so it can run alongside sneaker-arbitrage's postgres on 5433.
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvshoe -d cv_shoe_recognition"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: cv_sneaker_recognition:latest
-    container_name: cv_sneaker_recognition
+    image: cv_shoe_recognition:latest
+    container_name: cv_shoe_recognition
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8100:8100"
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+psycopg2://cvshoe:cvshoe_dev@postgres:5432/cv_shoe_recognition
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
     restart: unless-stopped
+
+volumes:
+  cv_shoe_pgdata:

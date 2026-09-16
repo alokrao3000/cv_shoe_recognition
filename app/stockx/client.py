@@ -29,7 +29,7 @@ from typing import List, Optional
 import httpx
 
 from app.config import settings
-from app.models import MarketData, SizeMarket
+from app.schemas import MarketData, SizeMarket, StockXProduct
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +273,51 @@ class StockXAPIClient:
             self._warn_shape("catalog/search", data)
         return []
 
+    @staticmethod
+    def _to_product(p: dict) -> Optional[StockXProduct]:
+        product_id = p.get("productId") or p.get("id")
+        if not product_id:
+            return None
+        attrs = p.get("productAttributes") or {}
+        style_id = str(p.get("styleId") or "")
+        return StockXProduct(
+            product_id=str(product_id),
+            url_key=str(p.get("urlKey") or ""),
+            style_id=style_id,
+            style_codes=_style_segments(style_id),
+            title=str(p.get("title") or ""),
+            brand=str(p.get("brand") or ""),
+            colorway=str(attrs.get("colorway") or ""),
+            gender=str(attrs.get("gender") or ""),
+            release_date=str(attrs.get("releaseDate") or ""),
+            retail_price=_amount(attrs.get("retailPrice")),
+            product_type=str(p.get("productType") or ""),
+        )
+
+    def search_products(self, query: str, page_size: int = 20) -> List[StockXProduct]:
+        """Structured catalog/search results. Raises on API failure (callers
+        decide whether that's fatal)."""
+        out = []
+        for p in self._search(query, page_size=min(page_size, 50)):
+            prod = self._to_product(p)
+            if prod is not None:
+                out.append(prod)
+        return out
+
+    def market_for_product(self, product: StockXProduct) -> "tuple[Optional[MarketData], Optional[str]]":
+        """Per-variant market data for an already-resolved catalog product.
+        Never raises — failures come back as a reason string."""
+        try:
+            return self._market_for(product.product_id, product.url_key)
+        except StockXBudgetExhausted as exc:
+            return None, f"error:budget_exhausted:{exc}"
+        except StockXRequestFailed as exc:
+            status = exc.status if exc.status is not None else "transport"
+            return None, f"error:{status}:{exc.path}"
+        except Exception as exc:
+            logger.exception(f"StockX market lookup failed for {product.product_id} (unexpected)")
+            return None, f"error:{type(exc).__name__}:{exc}"
+
     def _match_product(self, sku: str, name: str = "") -> "tuple[Optional[dict], Optional[str]]":
         """Returns (product, failure_reason)."""
         target = _norm_style(sku)
@@ -339,7 +384,9 @@ class StockXAPIClient:
         if not product_id:
             self._warn_shape("catalog/search:productId", product)
             return None, "error:no_productId"
+        return self._market_for(str(product_id), product.get("urlKey") or "")
 
+    def _market_for(self, product_id: str, url_key: str) -> "tuple[Optional[MarketData], Optional[str]]":
         variants = self._get_variants(product_id)
         market = self._request(f"/catalog/products/{product_id}/market-data", {"currencyCode": "USD"})
         rows = market if isinstance(market, list) else []
@@ -366,7 +413,6 @@ class StockXAPIClient:
         if not sizes:
             return None, "no_market_data"
 
-        url_key = product.get("urlKey") or ""
         overall_ask = min((s.lowest_ask for s in sizes if s.lowest_ask is not None), default=None)
         overall_bid = max((s.highest_bid for s in sizes if s.highest_bid is not None), default=None)
         return MarketData(

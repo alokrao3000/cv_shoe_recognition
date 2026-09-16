@@ -1,0 +1,19 @@
+{
+  "product": {
+    "id": 1,
+    "title": "Nike Dunk Low Retro \"White Black\"",
+    "vendor": "Nike",
+    "product_type": "Shoes",
+    "handle": "nike-dunk-low-retro-white-black",
+    "body_html": "<p>The Nike Dunk Low Retro returns in the iconic White/Black colorway.</p><p>Style: DD1391-100</p>",
+    "tags": ["Nike", "Dunk", "Sneakers"],
+    "images": [
+      {"src": "https://cdn.shopify.com/s/files/1/0001/products/dunk-low-panda-1.jpg?v=1"},
+      {"src": "https://cdn.shopify.com/s/files/1/0001/products/dunk-low-panda-2.jpg?v=1"}
+    ],
+    "variants": [
+      {"id": 11, "title": "9", "option1": "9", "sku": "DD1391-100-9", "price": "109.99", "available": true, "barcode": "196155451231"},
+      {"id": 12, "title": "10", "option1": "10", "sku": "DD1391-100-10", "price": "109.99", "available": true}
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sneaker Identification</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <h1>Sneaker Identification Engine</h1>
+  <nav><a href="/" class="active">Identify</a><a href="/review">Review queue</a><a href="/docs">API</a></nav>
+</header>
+<main>
+  <div class="grid">
+    <section class="panel">
+      <h2>Input</h2>
+      <form id="form">
+        <div class="drop" id="drop">Drop sneaker photo(s) here or click to choose<br><small>multiple angles help · HEIC ok</small>
+          <input type="file" id="files" accept="image/*" multiple hidden>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+        <label>Product page URL (optional)</label>
+        <input type="url" id="product_url" placeholder="https://retailer.com/products/nike-dunk-low">
+        <label>Image URL (optional, instead of upload)</label>
+        <input type="url" id="image_url" placeholder="https://cdn.retailer.com/shoe.jpg">
+        <label>Title (optional)</label>
+        <input type="text" id="title" placeholder="Nike Dunk Low Retro White / Black">
+        <label>Description (optional)</label>
+        <textarea id="description" placeholder="Anything the retailer page says"></textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="go" type="submit">Identify</button>
+          <span id="formmsg" class="muted"></span>
+        </div>
+      </form>
+      <div id="healthbox" class="muted" style="margin-top:14px;font-size:12.5px"></div>
+    </section>
+    <section class="panel">
+      <h2>Processing</h2>
+      <ul class="stages" id="stages"><li class="muted">Waiting for input…</li></ul>
+    </section>
+  </div>
+  <section class="panel" id="result" hidden></section>
+  <section class="panel" id="candidates" hidden></section>
+  <section class="panel" id="evidence" hidden></section>
+  <section class="panel">
+    <h2>Recent identifications</h2>
+    <ul class="list" id="recent"></ul>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>App.initIdentifyPage();</script>
+</body>
+</html>

@@ -1,218 +1,186 @@
-# CV Shoe Recognition
+# Sneaker Identification Engine
 
-Given a shoe photo (typically one a scraper couldn't extract a SKU from),
-identify which shoe it is via visual similarity search, then look up its
-current StockX lowest ask / highest bid.
-
-```
-photo → embed (DINOv2) → nearest neighbor in reference index → SKU
-      → StockX catalog match → lowest ask / highest bid
-```
-
-This is a companion to `sneaker-arbitrage` (`C:\Users\raoal\sneaker-arbitrage`),
-not a replacement for it — that project's scrapers already extract a SKU
-directly from most retailer pages; this project exists for the products
-where that fails (`sku_parse_failed` there). It's standalone: no shared
-runtime dependency, no database of its own. See **Reference data** below for
-the one place it *reads* from that project's DB.
-
-## Setup
+Given a retailer product page URL and/or sneaker photo(s), identify the **exact
+release** — brand, model, colorway, **style code** — and map it to the
+**verified StockX product** with its lowest ask / highest bid. When the evidence
+is weak, say so and queue it for human review instead of guessing.
 
 ```
-python -m venv venv
-venv\Scripts\pip install -r requirements.txt
-copy .env.example .env      # then fill in values
+URL / photos ─► extract page ─► detect style codes ─► vision analysis (Claude)
+             ─► visual similarity (DINOv2 + pgvector) ─► web + StockX candidate search
+             ─► score every candidate (transparent weights) ─► contradiction checks
+             ─► verifier pass (Claude) ─► StockX confirmation ─► tier: HIGH / MEDIUM / LOW / UNRESOLVED
 ```
 
-### StockX API
+Companion to `sneaker-arbitrage`: that scraper drops products it can't parse a
+SKU from (`sku_parse_failed`); this service resolves them. StockX is the
+**destination** (official API), never scraped.
 
-1. Create/reuse a developer app at developer.stockx.com; put
-   `STOCKX_CLIENT_ID`, `STOCKX_CLIENT_SECRET`, `STOCKX_API_KEY` in `.env`.
-2. Register this project's redirect URI (`STOCKX_REDIRECT_URI`, default
-   `http://localhost:8018/stockx/callback` — a different port than
-   sneaker-arbitrage's 8017, so both can be registered on the same app).
-3. Run `python scripts/stockx_auth.py` once — interactive login, saves a
-   refresh token to `data/stockx_token.json` (git-ignored). Get **this
-   project its own refresh token** rather than copying sneaker-arbitrage's —
-   two processes rotating the same one can race and invalidate each other's
-   session. See `app/stockx_client.py`'s docstring for the full auth model.
-
-### Reference data
-
-The reference index (the "known shoes" the model matches photos against) is
-built from `sneaker-arbitrage`'s Postgres DB: every distinct SKU its
-scrapers successfully parsed already has a retailer photo attached
-(`supplier_products.image_url`). That's free, real-world labeled data — no
-extra scraping needed to bootstrap this project.
-
-1. Make sure that DB is reachable (from the other repo: `docker compose up
-   -d postgres`, or its `runprogram` command).
-2. Set `ARBITRAGE_DATABASE_URL` in `.env` (defaults to the same local
-   connection string that project uses).
-3. Build the index:
-   ```
-   python scripts/build_reference_index.py          # full build
-   python scripts/build_reference_index.py --limit 200   # quick test build
-   ```
-   This downloads one photo per distinct SKU and embeds it — a full build
-   over thousands of SKUs takes a few minutes on CPU. Re-run periodically
-   (e.g. weekly) to pick up newly-seen SKUs; it's a full rebuild each time,
-   which is fine at this scale.
-
-## Running it
+## Quick start
 
 ```
+python -m venv venv && venv\Scripts\pip install -r requirements.txt
+copy .env.example .env                    # fill in keys (see below)
+docker compose up -d postgres             # Postgres 16 + pgvector on :5434
 venv\Scripts\python -m uvicorn app.main:app --reload --port 8100
 ```
 
-Open http://localhost:8100 for a minimal upload page, or `POST` an image to
-`/identify` (multipart `file` field) directly. `/docs` has the full API.
+Open http://localhost:8100 — drop photos and/or paste a product URL, watch the
+stages, get the result. `/review` is the human-verification queue, `/docs` the API.
 
-For quick manual testing without the server:
+### Keys
+
+| Setting | Needed for | Without it |
+|---|---|---|
+| `STOCKX_*` + `python scripts/stockx_auth.py` | candidate discovery by name/code, product confirmation, market data | no StockX mapping, `STOCKX_API_FAILED` |
+| `ANTHROPIC_API_KEY` | vision analysis (brand/model/colorway/tag text) and the verifier | `VISION_UNAVAILABLE`; HIGH only reachable via a page-printed SKU confirmed by StockX |
+| `SERPER_API_KEY` | web discovery of style codes; reference photos for image-less candidates | `WEB_SEARCH_FAILED`; relies on page SKU + StockX + local index |
+
+Every signal is optional; the pipeline records what was unavailable in the
+evidence and never fabricates confidence to compensate.
+
+### Seed the reference catalog
+
 ```
-python scripts/identify_cli.py path\to\photo.jpg
+python scripts/seed_from_arbitrage_db.py            # products + photos from sneaker-arbitrage's DB (needs its postgres up)
+python scripts/seed_stockx_catalog.py --images 300  # widen with StockX catalog + one web photo per product
 ```
 
-## How matching works
+Both are incremental and safe to re-run. The index also grows on its own:
+reference photos fetched during identifications and every human-confirmed
+match are stored as labeled `product_images`.
 
-- **Embedding model**: DINOv2 (`facebook/dinov2-base`, configurable via
-  `EMBEDDING_MODEL`) — chosen over CLIP because this is fine-grained
-  *instance* retrieval (telling colorways of the same silhouette apart), not
-  loose semantic matching. See `app/embeddings.py`.
-- **Pooling**: CLS token (`EMBEDDING_POOLING=cls`, the default). Mean-pooling
-  the patch tokens instead looked like the textbook fix for a weak-
-  discrimination symptom seen on real data, but `scripts/eval_pooling.py`
-  (a real leave-out test: hold out a *different retailer's* photo of a known
-  SKU, check whether it still ranks #1 against ~500 other candidates) showed
-  it's actually much worse — 57.5% top-1 for CLS vs. 22.5% for mean-pooled
-  patches. Don't change this default without re-running that eval.
-- **Index**: L2-normalized embeddings in a NumPy array, searched by a plain
-  matrix-multiply (dot product = cosine similarity). Not FAISS — that was
-  tried first and dropped after it turned out to crash on import alongside
-  torch on Windows (`OMP: Error #15`, conflicting bundled OpenMP runtimes;
-  reproducible). A brute-force NumPy scan is exact and just as fast at this
-  scale (thousands of SKUs) and has no such conflict. See `app/index.py`.
-- **Confidence gate**: a match is only trusted when the top candidate's
-  similarity clears `MIN_MATCH_SIMILARITY` *and* beats the runner-up by
-  `MIN_MATCH_MARGIN`. Otherwise the response is `identified: false` with a
-  `reason` (`no_confident_match` / `ambiguous_top_match`) — returning nothing
-  is better than a wrong SKU silently feeding a price lookup. Tune both in
-  `.env` once you've seen real match-score distributions on your data.
+## How identification works
 
-## StockX lookup
+**Inputs** — up to 6 images (upload, `image_url`) and/or a `product_url`, `title`,
+`description`. Identical inputs hit the resolution cache (`identifications.cache_key`).
 
-`app/stockx_client.py` is a trimmed port of sneaker-arbitrage's
-`app/scrapers/stockx_api.py` — same auth model and catalog-match strategy
-(style-code equality, then name+colorway fuzzy fallback), same market-data
-parsing. Differences, both because this project's call volume is on-demand
-and low (a couple of API calls per identify request, not a bulk scrape):
-- Refresh-token persistence is a local JSON file, not a DB table.
-- The daily rate-limit counter is in-memory (resets on restart), not shared
-  across processes. **If you run this alongside sneaker-arbitrage at real
-  scrape volume against the same StockX account, be aware the two
-  self-throttle independently and don't share a live budget counter** — fine
-  for occasional identify calls, not a substitute for the DB-backed counter
-  sneaker-arbitrage uses for its bulk lookups.
+**Stages** (`app/pipeline/identify.py`; each writes to the evidence graph and is timed):
 
-`/identify` returns the overall lowest ask / highest bid (min/max across all
-available sizes) plus a per-size breakdown.
+1. `extract` — `app/extraction/page_extractor.py`: JSON-LD/microdata → Shopify
+   `/products/<handle>.json` → `__NEXT_DATA__`/embedded JSON → OpenGraph/meta →
+   HTML. Collects title, brand, price, breadcrumbs, identifiers, all product images.
+   SSRF-guarded (http(s), public IPs, size/time bounded).
+2. `sku` — `app/extraction/sku_detector.py`: brand-aware style-code formats
+   (Nike/Jordan, adidas, New Balance, ASICS, Vans, Converse, Puma, Salomon, …),
+   labeled > bare, dates/prices/UPCs rejected, `DD1391-100 ≡ DD1391100 ≡ DD1391 100`.
+3. `vision` — `app/vision/claude_vision.py`: one structured call over all images
+   (brand, model incl. height, colorway in official order, nickname, legible tag
+   code, gender/GS cues, distinctive features, likely releases). Model:
+   `VISION_MODEL` (default `claude-opus-5`).
+4. `embedding` — DINOv2 CLS embeddings (`app/vision/embeddings.py`, kept from the
+   original project: CLS beat patch pooling 57.5% vs 22.5% top-1 in a real
+   cross-retailer eval) searched with pgvector cosine (`app/db/vector_search.py`).
+5. `candidates` — `app/search/web_discovery.py` (Serper) harvests style codes from
+   result titles/snippets, weighting agreement across domains and domain trust;
+   StockX `catalog/search` by title / vision attributes; every code resolved to
+   StockX metadata (`app/stockx/catalog.py`, DB-cached); image-less leaders get a
+   web reference photo embedded for the visual signal.
+6. `resolve` — `app/pipeline/scoring.py`:
 
-## Reference coverage gap, and the (currently blocked) backfill
+   | component | weight | what it compares |
+   |---|---|---|
+   | sku_match | 0.40 | page-printed code 1.0 · tag code 0.9 · web agreement 0.35+0.15/domain · vision recall 0.35 |
+   | model_match | 0.20 | canonical model (`Nike Dunk Low` ≠ `Nike Dunk High`) |
+   | colorway_match | 0.15 | ordered colour tokens (`White/Black` ≠ `Black/White`), nickname equality |
+   | embedding_similarity | 0.15 | cosine vs reference photos, floor 0.70 → ceiling 0.92 |
+   | metadata_match | 0.05 | price vs retail, gender, size category, brand |
+   | external_agreement | 0.05 | number of independent signals |
 
-The DB-sourced reference index only ever contains SKUs some retailer among
-sneaker-arbitrage's ~80 happened to scrape — real-world case that surfaced
-this: a photo of a genuine, StockX-sellable Air Force 1 colorway
-(`IV6027-001`) came back `identified: false`, not because matching failed,
-but because that SKU had **zero rows** in `supplier_products` — no retailer
-in the DB had ever carried it. No embedding model fixes a SKU the index
-never saw a photo of.
+   Unknown = neutral (0.5); missing ≠ contradicting. **Contradictions** then
+   reject (model mismatch, GS/PS/TD vs adult, brand mismatch, non-footwear) or
+   penalize (gender, colorway conflict, tag/page code mismatch, missing collab,
+   inconsistent input images). Weights/thresholds are all `.env` settings.
+7. `verify` — the top 3 survivors go back to Claude with the query photos (and
+   reference photos when available) as a *skeptical* verifier: same / different /
+   uncertain with concrete contradictions. `different` rejects, `uncertain` caps
+   below HIGH.
+8. `stockx` — winner's style code must resolve to exactly one StockX product whose
+   title agrees; otherwise `STOCKX_MATCH_UNCERTAIN`. `market` fetches per-size
+   asks/bids (withheld when unresolved).
 
-`scripts/backfill_stockx_images.py` exists to close that gap: it enumerates
-a broader slice of StockX's catalog via `catalog/search` (curated seed
-queries — brand/silhouette terms, see `SEED_QUERIES` in the script), then
-fetches a real product photo for each SKU missing from the index and merges
-it in. Getting that photo isn't simple, though — **StockX's official API
-has no image field at all** (confirmed live), and **its website is behind
-Cloudflare bot management**: a plain HTTP GET gets a 403 challenge page, so
-this goes through a stealth browser (`app/browser_session.py`, ported from
-sneaker-arbitrage's `app/scrapers/browser.py`, same patchright approach
-already proven out there for StockX/GOAT market-data scraping).
+**Tiers** — ≥0.95 HIGH, ≥0.85 MEDIUM, ≥0.70 LOW, else UNRESOLVED. HIGH additionally
+requires verifier agreement *or* a page-printed style code confirmed by StockX.
+Top-2 within `AMBIGUITY_MARGIN` → `MULTIPLE_CANDIDATES` and never HIGH. LOW,
+UNRESOLVED, `MULTIPLE_CANDIDATES` and `STOCKX_MATCH_UNCERTAIN` go to `/review`.
 
-**Current status: blocked in this dev environment.** Live-tested both a
-cold session and one loaded with sneaker-arbitrage's own accumulated
-`stockx.json` session cookies — both get Cloudflare's "Just a moment..."
-interstitial and it never clears. Ruling out stale cookies as the cause
-points at IP/network-reputation blocking, which `browser.py`'s own
-docstring already flagged as a real risk with no proxy configured
-(`STOCKX_PROXY_URL`/`GOAT_PROXY_URL` are empty in sneaker-arbitrage's
-`.env` too). **This may or may not reproduce from a different network** —
-try it yourself:
+**Failure codes**: `NO_PRODUCT_IMAGE NO_METADATA NO_SKU VISION_UNCERTAIN
+VISION_UNAVAILABLE MULTIPLE_CANDIDATES WEB_SEARCH_FAILED STOCKX_API_FAILED
+STOCKX_MATCH_UNCERTAIN CONTRADICTORY_EVIDENCE NOT_A_SNEAKER NO_CANDIDATES`.
+
+## API
+
 ```
-venv\Scripts\pip install -r requirements.txt   # picks up patchright
-venv\Scripts\python -m patchright install chromium
-python scripts/backfill_stockx_images.py --headed --max-new 5
+POST /api/identify              multipart: files[], product_url, image_url, title, description → {id}
+GET  /api/identify/{id}         stages, status, confidence, product, stockx, candidates, evidence, failure_codes
+POST /api/identify/{id}/rerun   fresh run from the same inputs
+GET  /api/identifications       recent
+POST /api/sneaker/identify      JSON {image_url|image_urls, product_url, title, description} → synchronous result
+GET  /api/review/queue          items needing a human
+POST /api/review/{id}/decision  {action: confirm|reject|select|manual_sku, style_code?, notes?}
+GET  /health
 ```
-`--headed` opens a real browser window so you can see directly whether it's
-a Cloudflare challenge page or the real site. If it works for you, drop
-`--headed` and raise `--max-new` for a real run. If it's still blocked, a
-residential proxy is the standard fix for this class of problem (thread it
-through `proxy_url` in `app/browser_session.py`, same shape as
-sneaker-arbitrage's `STOCKX_PROXY_URL`) — not yet wired up here since
-there's nothing to point it at.
 
-### Per-request fallback: reverse image search (`app/reverse_image_search.py`)
+Set `API_TOKEN` to require a bearer token on `/api/*`; requests are rate-limited
+per IP; uploads are size/type checked; fetched URLs must be public http(s).
 
-The backfill above only helps once, ahead of time, and only for SKUs it
-happened to think to look for. A live `/identify` call for a shoe the index
-never saw — a real case that surfaced this: a StrangeLove Dunks photo came
-back `identified: false` even though it's about as recognizable as shoes
-get — has nowhere else to go once the local match fails, *unless* something
-finds the SKU some other way at request time.
+The arbitrage engine should treat the response as:
+`high` → use `stockx` automatically · `medium` → use but mark for verification ·
+`low` → don't use for profit calculations · `unresolved` → manual review.
 
-`app/reverse_image_search.py` does that by going around StockX's wall
-instead of through it: reverse-image-search the uploaded photo via Google
-Images to find *other* pages carrying the same shoe (a retailer, a resale
-listing, a sneaker-info site — anything not itself bot-walled), then scrape
-a SKU/style-code off one of those pages. Any SKU recovered this way still
-has to clear the normal StockX `catalog/search` match before it's trusted
-for a market lookup — finding a SKU-shaped string on a random page isn't
-proof by itself.
+## Evidence graph
 
-**Current status: also blocked from this dev environment**, same class of
-problem as the StockX backfill above — verified live, the very first
-reverse-image upload gets Google's own "unusual traffic" bot check before
-any results render. Consequently:
-- It's **off by default** (`REVERSE_IMAGE_SEARCH_ENABLED=false`) — wiring in
-  a fallback that reliably hits a CAPTCHA wall would just add latency to
-  every unmatched `/identify` call for no benefit.
-- The result-page scraping (best-guess text, result links, the SKU regexes)
-  is consequently **unverified** against a real results page — written from
-  Google Images' known layout, not confirmed live.
-- Try it yourself with `scripts/test_reverse_image_search.py path\to\photo.jpg
-  --headed` — if your network gets past the challenge, check the scraped
-  best-guess/links look right and fix up the selectors as needed, then flip
-  `REVERSE_IMAGE_SEARCH_ENABLED=true`. If it's also blocked,
-  `REVERSE_IMAGE_SEARCH_PROXY_URL` takes the same proxy this project's
-  other browser use does.
+Every identification stores `evidence` (input, page, detected attributes, vision,
+visual/web/StockX candidates, scoring ranking, contradictions, verification,
+resolution, errors, timings) plus every candidate's per-component scores and
+notes. If it's wrong, the UI's Evidence panel shows *which* signal misled it.
 
-## Known limitations / next steps
+## Human review → training data
 
-- Reference coverage is bounded by what's been scraped/backfilled — see
-  above. `scripts/build_reference_index.py` also silently drops SKUs whose
-  image failed to download/embed (~11% of the DB's distinct SKUs, last
-  checked) — worth investigating on its own before reaching for the
-  StockX backfill.
-- One reference image per SKU (whichever retailer photo was most recently
-  scraped, or fetched by the backfill). Multiple angles per SKU would likely
-  improve match robustness — `supplier_products` only stores one `image_url`
-  today, so this would need a schema change on the sneaker-arbitrage side.
-- No fine-tuning — DINOv2 is used zero-shot. Real leave-out testing
-  (`scripts/eval_pooling.py`) puts top-1 cross-retailer-photo accuracy at
-  ~57.5% for the current best pooling — a real ceiling, not just an
-  untuned threshold. If that's not good enough, fine-tuning on scraped
-  (sku, image) pairs is the next lever, not swapping the base model again
-  without re-running the eval.
-- Not yet wired into sneaker-arbitrage's `sku_parse_failed` fallback path —
-  by design, per the standalone-first decision. Integration would mean that
-  scraper calling this project's `/identify` (or importing its functions
-  directly) when SKU extraction fails.
+`/review` shows the retailer product beside the scored candidates. Confirm /
+select / enter a style code / reject. A human match sets the identification to
+HIGH, upserts the product with StockX metadata, and stores the query photos as
+`user_confirmed` reference images — so the next photo of that shoe matches
+visually. Decisions are kept in `review_decisions` with what the system had said.
+
+## Evaluation
+
+```
+python scripts/build_eval_set.py --pairs 100     # cross-retailer held-out pairs from the arbitrage DB (+ data/eval/curated.jsonl)
+python scripts/run_eval.py                       # top-1/top-3, SKU acc, StockX mapping acc, FALSE-POSITIVE rate, unresolved, latency
+python scripts/run_eval.py --no-llm              # ablations: --no-web --no-db --no-url
+```
+
+The false-positive rate (confident but wrong) is the headline metric — a wrong
+SKU silently feeding the arbitrage engine is the failure this project exists to
+prevent. Add hard cases (similar colorways, GS vs adult, collabs, poor photos) to
+`data/eval/curated.jsonl`; tune weights/thresholds in `.env` from the results.
+
+Unit tests (`venv\Scripts\pytest`) cover extraction on fixture pages, style-code
+detection, normalization, web discovery, scoring/contradictions/tiers on the
+spec's scenarios, and a mocked end-to-end pipeline (no network, no DB, no torch).
+
+## Layout
+
+```
+app/extraction/   page_extractor · sku_detector · normalize
+app/vision/       embeddings (DINOv2) · claude_vision
+app/search/       provider (Serper, swappable) · web_discovery
+app/stockx/       client (official API, OAuth, budget) · catalog (cached)
+app/pipeline/     identify (orchestrator) · candidates · scoring · service (persistence) · cache
+app/db/           models (pgvector) · session · vector_search · repo
+app/review/       review API
+app/static/       UI (vanilla JS)
+scripts/          stockx_auth · seed_from_arbitrage_db · seed_stockx_catalog · build_eval_set · run_eval · identify_cli
+```
+
+## Known limitations
+
+- Reference coverage is what has been seeded/confirmed; a never-seen shoe relies
+  on the page SKU, vision + web discovery and StockX — which is the designed path.
+- No fine-tuning: DINOv2 is used zero-shot; the visual signal is one of six and
+  can't produce a confident answer alone by construction.
+- StockX's API has no images; reference photos come from retailers, the web and
+  confirmed uploads.
+- Not yet wired into sneaker-arbitrage's `sku_parse_failed` path — call
+  `POST /api/sneaker/identify` from there once the eval numbers are acceptable.

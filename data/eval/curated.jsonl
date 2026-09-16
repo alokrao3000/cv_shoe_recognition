@@ -1,0 +1,7 @@
+# Hand-curated evaluation cases — one JSON object per line. Lines starting with # are ignored.
+# Fields: image_url | image_path (relative to data/eval/images/), product_url, title, description,
+#         expected_style_code (the ground truth), expected_stockx_product_id (optional), tags[]
+# Suggested tags: similar_colorway, gs, womens, collab, multi_image, poor_photo, old_release, new_release, no_sku, sku_on_page
+# Example (replace with real, verified cases):
+# {"image_path": "panda_side.jpg", "title": "Nike Dunk Low Retro White Black", "expected_style_code": "DD1391-100", "tags": ["no_sku", "similar_colorway"]}
+# {"image_path": "panda_gs.jpg", "title": "Nike Dunk Low (GS) White Black", "expected_style_code": "CW1590-100", "tags": ["gs", "similar_colorway"]}

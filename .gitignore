@@ -4,14 +4,17 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Built reference index + downloaded reference images + StockX token cache —
-# regenerate with scripts/build_reference_index.py / scripts/stockx_auth.py
-data/reference_index/*
-!data/reference_index/.gitkeep
-data/query_cache/*
-!data/query_cache/.gitkeep
+# StockX token cache (refresh token) — never committed
 data/stockx_token.json
 
-# Browser session cookies (scripts/backfill_stockx_images.py) — same
-# sensitivity as any other saved login session, never committed.
+# Uploaded query images kept for the review UI / eval set
+data/uploads/
+data/eval/images/
+# Generated eval inputs/outputs (keep data/eval/curated.jsonl)
+data/eval/cases.jsonl
+data/eval/results*.jsonl
+
+# Legacy on-disk index (pre-DB) — safe to delete
+data/reference_index/
+data/query_cache/
 data/browser_state/

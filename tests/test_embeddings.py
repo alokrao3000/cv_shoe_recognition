@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app import embeddings
+from app.vision import embeddings
 
 
 def _fake_jpeg_bytes(color=(200, 50, 50)) -> bytes:

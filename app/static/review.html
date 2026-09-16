@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review queue</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <h1>Sneaker Identification Engine</h1>
+  <nav><a href="/">Identify</a><a href="/review" class="active">Review queue</a><a href="/docs">API</a></nav>
+</header>
+<main>
+  <div class="grid" style="grid-template-columns: 340px 1fr">
+    <section class="panel">
+      <h2>Needs a human <span id="qcount" class="muted"></span></h2>
+      <ul class="list" id="queue"><li class="muted">Loading…</li></ul>
+    </section>
+    <div style="display:grid;gap:20px">
+      <section class="panel" id="detail"><h2>Retailer product</h2><p class="muted">Select an item from the queue.</p></section>
+      <section class="panel" id="matches" hidden></section>
+      <section class="panel" id="actions" hidden>
+        <h2>Decision</h2>
+        <div class="row">
+          <button class="primary" id="btn-confirm">Confirm top candidate</button>
+          <button class="danger" id="btn-reject">Reject all</button>
+          <input type="text" id="manual_sku" placeholder="Enter style code manually (e.g. DD1391-100)" style="max-width:320px">
+          <button id="btn-manual">Use this style code</button>
+          <button id="btn-rerun">Search again</button>
+          <span id="actionmsg" class="muted"></span>
+        </div>
+      </section>
+      <section class="panel" id="evidence" hidden></section>
+    </div>
+  </div>
+</main>
+<script src="/static/app.js"></script>
+<script>App.initReviewPage();</script>
+</body>
+</html>
